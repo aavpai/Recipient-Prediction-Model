@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Seva Recipient Forecast</title>
+  <meta name="description" content="Forecast returning households for upcoming Seva food distribution drives.">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="site-header">
+      <div>
+        <div class="eyebrow">SEVA DATA PROJECT</div>
+        <h1>Recipient Forecast</h1>
+        <p class="subtitle">Estimate how many previously observed households are likely to return for an upcoming distribution drive.</p>
+      </div>
+      <div class="status-pill">V1 · Return model</div>
+    </header>
+
+    <main>
+      <section class="panel input-panel">
+        <div class="section-heading">
+          <div>
+            <h2>Run a forecast</h2>
+            <p>Upload the latest Guest Visit export and select the upcoming core drive.</p>
+          </div>
+        </div>
+
+        {% if error %}
+          <div class="alert error">{{ error }}</div>
+        {% endif %}
+
+        <form action="/forecast" method="post" enctype="multipart/form-data" class="forecast-form">
+          <label class="field span-2">
+            <span>Guest Visit CSV</span>
+            <input type="file" name="data_file" accept=".csv,text/csv" required>
+            <small>The app processes the file for this forecast and does not save it to the repository.</small>
+          </label>
+
+          <label class="field">
+            <span>Upcoming drive date</span>
+            <input type="date" name="drive_date" required>
+          </label>
+
+          <label class="field">
+            <span>Drive position</span>
+            <select name="drive_position" required>
+              <option value="1">Drive 1</option>
+              <option value="2">Drive 2 — TEFAP / extra food</option>
+            </select>
+          </label>
+
+          <div class="span-2 action-row">
+            <button type="submit">Generate forecast</button>
+            <span class="privacy-note">No names, addresses, or dates of birth are model features.</span>
+          </div>
+        </form>
+      </section>
+
+      {% if result %}
+      <section class="result-section">
+        <div class="result-header">
+          <div>
+            <div class="eyebrow">FORECAST RESULT</div>
+            <h2>{{ result.drive_date }}</h2>
+            <p>{{ result.drive_label }}</p>
+          </div>
+          {% if result.specials %}
+            <div class="special-badge">{{ result.specials | join(' + ') }}</div>
+          {% endif %}
+        </div>
+
+        <div class="metric-grid">
+          <article class="metric-card primary-card">
+            <div class="metric-label">Predicted returning households</div>
+            <div class="metric-value">{{ result.predicted_returning_households }}</div>
+            <div class="metric-foot">Model sum: {{ result.predicted_returning_households_exact }}</div>
+          </article>
+          <article class="metric-card">
+            <div class="metric-label">Approx. 80% model interval</div>
+            <div class="metric-value compact">{{ result.interval_low }}–{{ result.interval_high }}</div>
+            <div class="metric-foot">Independence approximation</div>
+          </article>
+          <article class="metric-card">
+            <div class="metric-label">People in returning households</div>
+            <div class="metric-value">{{ result.predicted_people }}</div>
+            <div class="metric-foot">Probability × latest household size</div>
+          </article>
+          <article class="metric-card">
+            <div class="metric-label">Known recipients scored</div>
+            <div class="metric-value">{{ "{:,}".format(result.known_recipients) }}</div>
+            <div class="metric-foot">{{ "{:,}".format(result.active_180) }} active in prior 180 days</div>
+          </article>
+        </div>
+
+        <div class="detail-grid">
+          <article class="panel">
+            <h3>Probability distribution</h3>
+            <div class="bucket-list">
+              {% for bucket in result.buckets %}
+              <div class="bucket-row">
+                <span>{{ bucket.label }}</span>
+                <strong>{{ "{:,}".format(bucket.count) }}</strong>
+              </div>
+              {% endfor %}
+            </div>
+            <p class="muted">Average recipient probability: {{ result.mean_probability }}%</p>
+          </article>
+
+          <article class="panel explanation-panel">
+            <h3>How to read this forecast</h3>
+            <p>Each previously observed recipient receives an attendance probability based on their history and the upcoming drive type. Adding those probabilities produces the expected number of returning households.</p>
+            <p><strong>This does not include first-time households.</strong> A separate new-household model is needed for a total-attendance forecast.</p>
+          </article>
+        </div>
+      </section>
+      {% else %}
+      <section class="info-grid">
+        <article class="panel">
+          <div class="number">01</div>
+          <h3>Recipient history</h3>
+          <p>Recency, frequency, prior core-drive attendance, missed drives, and Drive-2 affinity.</p>
+        </article>
+        <article class="panel">
+          <div class="number">02</div>
+          <h3>Drive characteristics</h3>
+          <p>Drive 2 is TEFAP / extra food. Toy, Backpack, Thanksgiving, and Christmas overlays are recognized automatically from the month and drive position.</p>
+        </article>
+        <article class="panel">
+          <div class="number">03</div>
+          <h3>Operational forecast</h3>
+          <p>Recipient probabilities are summed into a single estimate of returning households for the upcoming drive.</p>
+        </article>
+      </section>
+      {% endif %}
+
+      <section class="method-note">
+        <strong>Model scope:</strong> returning known recipients only. Drive 2 and TEFAP always occur together historically, so the model cannot separate a pure later-in-month effect from the extra-food/TEFAP effect.
+      </section>
+    </main>
+
+    <footer>
+      Seva Data Project · Recipient Return Prediction V1
+    </footer>
+  </div>
+</body>
+</html>
