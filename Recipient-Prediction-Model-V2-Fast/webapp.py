@@ -317,9 +317,11 @@ def _render_home_error(message: str):
     )
 
 
-@app.post("/forecast")
+@app.route("/forecast", methods=["GET", "POST"])
 @login_required
 def forecast():
+    if request.method == "GET":
+        return redirect(url_for("home"))
     request_started = perf_counter()
     try:
         requested_date = date.fromisoformat(request.form.get("drive_date", ""))
