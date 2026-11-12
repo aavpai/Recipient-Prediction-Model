@@ -409,7 +409,7 @@ def apply_drive(visits, drive_meta: dict, file_sha256: str) -> dict[str, int]:
         for row in visits.to_dict("records"):
             attendee_values.append((
                 str(row["guest_id"]).strip(),
-                d, d,
+                d, d, d,
                 d1, d2, d1, d2, ordinary_d1, ordinary_d2,
                 int(row["total_individuals"]),
                 int(row["kids"]),
@@ -447,7 +447,7 @@ def apply_drive(visits, drive_meta: dict, file_sha256: str) -> dict[str, int]:
     return {"attendees": len(visit_values), "drive_position": position}
 
 
-def fetch_scoring_state(future_date: date) -> tuple[list[dict], date | None]:
+def fetch_scoring_state(future_date: date) -> tuple[list[dict], dict[str, dict[str, int]], date | None]:
     """Fetch compact state plus rolling counts for one upcoming drive."""
     if not is_configured():
         raise RuntimeError("Persistent storage is not configured. Set DATABASE_URL first.")
