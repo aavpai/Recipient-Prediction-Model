@@ -328,6 +328,7 @@ def advance_recipient_state_snapshot(
                 state[key] = int(visit[key])
         else:
             state = _new_state(d, visit)
+            state["guest_id"] = gid
             state["all_prior_visits"] = 1
             state["core_opps"] = 1
             state["d2_opps" if position == 2 else "d1_opps"] = 1
