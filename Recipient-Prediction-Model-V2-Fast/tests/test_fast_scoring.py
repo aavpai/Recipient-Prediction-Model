@@ -138,3 +138,94 @@ def test_incremental_state_update_matches_full_history_replay():
     compare_columns = sorted(set(left.columns) & set(right.columns))
     for column in compare_columns:
         assert left[column].tolist() == right[column].tolist()
+
+
+
+@pytest.mark.skipif(
+    not __import__("os").environ.get("DATABASE_URL"),
+    reason="PostgreSQL integration test requires DATABASE_URL",
+)
+def test_postgres_baseline_and_incremental_drive_update():
+    from seva_model import storage
+
+    # Each CI job gets a disposable PostgreSQL service. Reset its public schema
+    # so this integration test is deterministic.
+    with storage._connect() as conn:
+        conn.execute("DROP SCHEMA public CASCADE")
+        conn.execute("CREATE SCHEMA public")
+
+    root = Path(__file__).resolve().parents[1]
+    raw = load_raw_export(root / "sample_data" / "synthetic_guest_visits.csv")
+    visits = collapse_to_visits(raw)
+    config = load_config(root / "config" / "drive_calendar.yaml")
+    calendar = infer_core_calendar(visits, config)
+
+    baseline = storage.initialize_history(visits, calendar, "baseline-test-hash")
+    assert baseline["visits"] == len(visits)
+    assert storage.get_status()["initialized"] is True
+
+    known_ids = sorted(visits["guest_id"].astype(str).unique())
+    drive_date = max(visits["date"]) + timedelta(days=14)
+    drive_meta = future_drive_meta(drive_date, 2, config)
+    drive_visits = pd.DataFrame([
+        {
+            "visit_id": "db-incremental-known",
+            "guest_id": known_ids[0],
+            "date": drive_date,
+            "outreach_name": "Backpack Drive",
+            "total_individuals": 3,
+            "kids": 1,
+            "adults": 2,
+            "seniors": 0,
+            "homeless": 0,
+        },
+        {
+            "visit_id": "db-incremental-new",
+            "guest_id": "DB-NEW-GUEST-001",
+            "date": drive_date,
+            "outreach_name": "Backpack Drive",
+            "total_individuals": 4,
+            "kids": 2,
+            "adults": 2,
+            "seniors": 0,
+            "homeless": 0,
+        },
+    ])
+
+    imported = storage.apply_drive(drive_visits, drive_meta, "drive-test-hash")
+    assert imported["attendees"] == 2
+    with pytest.raises(ValueError):
+        storage.apply_drive(drive_visits, drive_meta, "duplicate-drive-hash")
+
+    status = storage.get_status()
+    assert status["recipients"] == len(known_ids) + 1
+    assert status["visits"] == len(visits) + 2
+    assert status["core_drives"] == len(calendar) + 1
+
+    forecast_date = drive_date + timedelta(days=14)
+    forecast_meta = future_drive_meta(forecast_date, 1, config)
+    state_rows, recent_counts, previous_core_date = storage.fetch_scoring_state(
+        forecast_date
+    )
+    database_score = build_scoring_frame_from_states(
+        state_rows, recent_counts, forecast_meta, previous_core_date
+    )
+
+    full_visits = pd.concat([visits, drive_visits], ignore_index=True)
+    calendar_row = {
+        **drive_meta,
+        "attendance": len(drive_visits),
+        "calendar_source": "manual",
+    }
+    full_calendar = pd.concat(
+        [calendar, pd.DataFrame([calendar_row])], ignore_index=True
+    ).sort_values("date").reset_index(drop=True)
+    replay_score = build_future_scoring_frame(
+        full_visits, full_calendar, forecast_meta
+    )
+
+    left = database_score.sort_values("guest_id").reset_index(drop=True)
+    right = replay_score.sort_values("guest_id").reset_index(drop=True)
+    assert left["guest_id"].tolist() == right["guest_id"].tolist()
+    for feature in FEATURES:
+        assert left[feature].tolist() == pytest.approx(right[feature].tolist())
