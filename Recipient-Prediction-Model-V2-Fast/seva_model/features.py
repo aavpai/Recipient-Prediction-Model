@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from copy import deepcopy
-from datetime import date
+from bisect import bisect_left, bisect_right
+from datetime import date, timedelta
 import pandas as pd
 
 SPECIALS = ["toy", "backpack", "thanksgiving", "christmas"]
@@ -23,6 +23,19 @@ FEATURES = [
     "thanksgiving_x_household", "christmas_x_household",
     "month_sin", "month_cos",
 ]
+
+
+def _count_recent_visits(prior_dates: list[date], as_of: date, days: int) -> int:
+    """Count visits in an inclusive rolling window using sorted visit dates.
+
+    Recipient visit dates are appended in chronological order, so binary search
+    avoids rescanning the full lifetime history for each rolling-window feature.
+    """
+    cutoff = as_of - timedelta(days=days)
+    return max(
+        0,
+        bisect_right(prior_dates, as_of) - bisect_left(prior_dates, cutoff),
+    )
 
 
 def _new_state(d: date, visit: dict) -> dict:
@@ -57,7 +70,7 @@ def _feature_row(gid: str, st: dict, d: date, meta: dict, previous_core_date: da
     prior_dates = st["all_visit_dates"]
 
     def recent(days: int) -> int:
-        return sum(1 for x in prior_dates if (d - x).days <= days)
+        return _count_recent_visits(prior_dates, d, days)
 
     ordinary_n = st["ordinary_d1_visits"] + st["ordinary_d2_visits"]
     d2_affinity = st["ordinary_d2_visits"] / ordinary_n if ordinary_n else 0.5
