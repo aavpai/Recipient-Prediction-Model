@@ -163,7 +163,6 @@ def _make_result(score, requested_date: date, meta: dict) -> dict:
     lo80 = max(0.0, expected_households - 1.2816 * sd)
     hi80 = expected_households + 1.2816 * sd
 
-    latest_visit = max(score["days_since_last_any"].index) if False else None
     specials = [
         name.title()
         for name in ["toy", "backpack", "thanksgiving", "christmas"]
@@ -189,7 +188,7 @@ def _make_result(score, requested_date: date, meta: dict) -> dict:
     }
 
 
-@app.get("/login")
+@app.route("/login", methods=["GET", "POST"])
 def login():
     if not AUTH_READY:
         return render_template(
