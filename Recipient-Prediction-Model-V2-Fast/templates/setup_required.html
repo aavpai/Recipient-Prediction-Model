@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Configuration required · Seva Recipient Forecast</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+  <div class="page-shell">
+    <main class="login-shell">
+      <section class="panel input-panel">
+        <div class="eyebrow">SEVA DATA PROJECT</div>
+        <h1>Dashboard setup required</h1>
+        <p class="subtitle">The application is deployed, but its access-protection settings are not complete.</p>
+        <div class="alert error">
+          {% if missing_password %}<p><strong>APP_PASSWORD</strong> is missing. Add a strong dashboard password in Render → Environment.</p>{% endif %}
+          {% if missing_secret %}<p><strong>SECRET_KEY</strong> is missing. Add a long random secret in Render → Environment.</p>{% endif %}
+        </div>
+        <p>After adding both variables, save and redeploy the service. Do not put either value in GitHub or share it in this chat.</p>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
