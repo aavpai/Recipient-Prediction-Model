@@ -1,27 +1,16 @@
 # Seva Recipient Forecast — Fast V2
 
-A web app for forecasting how many **previously observed Seva recipients** are likely to attend a specific upcoming core food distribution drive.
+A password-protected web app for estimating the probability that previously observed Seva recipients return for a specific upcoming distribution drive.
 
-## Why V2 is faster
+## Forecast target
 
-The old web version retrained the full gradient-boosting model every time a user clicked **Generate Forecast**. On the real lifetime export that training step takes roughly 25 seconds and can exceed low-cost web-host request/resource limits.
+For each known recipient i and upcoming drive t:
 
-V2 uses **train once, predict many times**:
+    P(recipient i attends drive t | recipient history + upcoming drive characteristics)
 
-1. A validated model is trained offline and saved in `models/seva_operational_model.joblib`.
-2. The web app loads that model once when the server starts.
-3. When a cumulative/lifetime Seva CSV is uploaded, the app only cleans the data, reconstructs current recipient histories, and scores the upcoming drive.
-4. No model fitting occurs during the web request.
+Summing recipient probabilities gives the expected number of returning households. This is not a total-attendance forecast; it does not include first-time households.
 
-On the current lifetime export, the scoring pipeline takes only a few seconds in local testing rather than ~25 seconds for retraining.
-
-## What to upload
-
-For the current V2 app, upload the **current cumulative/lifetime Guest Visit export**, not only the most recent drive. The model needs prior history to calculate recency, frequency, Drive-1/Drive-2 behavior, missed drives, special-drive history, and household composition.
-
-The uploaded CSV is processed in memory and is **not committed to GitHub**.
-
-## Drive structure
+## Drive calendar
 
 - Two core drives per month.
 - Drive 2 is always TEFAP / extra food.
@@ -30,29 +19,51 @@ The uploaded CSV is processed in memory and is **not committed to GitHub**.
 - November Drive 2: Thanksgiving Drive + TEFAP.
 - December Drive 2: Christmas Drive + TEFAP.
 
-## Model target
+Drive 2 and TEFAP always occur together historically, so the model cannot separately identify a later-in-month effect from the extra-food/TEFAP effect.
 
-For every known recipient `i` and upcoming drive `t`:
+## Faster request path
 
-`P(recipient i attends drive t | recipient history + upcoming drive characteristics)`
+The web app loads a pretrained model once at startup. Forecast requests do not retrain the model. CSV imports select only fields required by the pipeline and hash the upload as a stream rather than copying the entire file into memory.
 
-Summing recipient probabilities gives the expected number of **returning households**. The model does not yet forecast first-time households.
+The serialized model was created with scikit-learn 1.8.0, so dependencies pin that version to avoid incompatible model deserialization.
 
-## Render deployment
+## Incremental history mode
 
-Use these settings:
+When DATABASE_URL is configured:
 
-- **Root Directory:** the directory containing `webapp.py` and `requirements.txt`
-- **Build Command:** `pip install -r requirements.txt`
-- **Start Command:** `gunicorn webapp:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 120`
-- **Health Check Path:** `/health`
+1. Upload the cumulative/lifetime Guest Visit export once.
+2. The app stores normalized visit rows and compact recipient states in PostgreSQL.
+3. After each completed drive, upload only that drive's CSV and select its date and position.
+4. The app updates recipient state incrementally; it does not replay the entire lifetime history.
+5. Forecast the next drive without uploading a CSV.
 
-The included `render.yaml` contains the same configuration and pins Python 3.12.8.
+A drive date can only be imported once. Duplicate imports are rejected.
 
-## Privacy
+Without PostgreSQL, the app retains a temporary fast-scoring mode that requires the cumulative/lifetime export for every forecast.
 
-Do not commit the real Seva recipient CSV to GitHub. Keep the repository private if you want the fitted model and project code restricted as well.
+## Security and privacy
 
-## Retraining
+The dashboard requires APP_PASSWORD and SECRET_KEY. Recipient-level records are stored in PostgreSQL and include Guest IDs, visit dates, household counts, and a homelessness indicator.
 
-The bundled operational model is trained through the current historical export used to build V2. As new months accumulate, retrain offline using the local training scripts, validate chronologically, then replace `models/seva_operational_model.joblib`.
+Never commit real Guest Visit exports, database URLs, passwords, or secret keys to GitHub. Keep access restricted to authorized Seva staff. Use a database plan with a backup/retention policy appropriate for recipient-level data; Render Free Postgres expires after 30 days and has no backups.
+
+## Deployment
+
+See DEPLOY.md for Render configuration, database setup, initialization, and ongoing use.
+
+Required Render environment variables:
+
+- SECRET_KEY
+- APP_PASSWORD
+- DATABASE_URL
+
+The Render service root directory must be Recipient-Prediction-Model-V2-Fast.
+
+## Development and tests
+
+    python -m venv .venv
+    source .venv/bin/activate
+    pip install -r requirements.txt
+    python -m pytest -q
+
+GitHub Actions runs the test suite on pushes and pull requests.
