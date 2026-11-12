@@ -292,7 +292,7 @@ def main() -> None:
     parser.add_argument(
         "--calendar-overrides",
         default="config/drive_calendar_overrides.csv",
-        help="Reviewed drive-date calendar; pass an empty string to use inference.",
+        help="Fixed historical drive-date calendar; pass an empty string to use inference.",
     )
     parser.add_argument("--start-date", default="2025-01-01")
     parser.add_argument("--end-date", default=None)
