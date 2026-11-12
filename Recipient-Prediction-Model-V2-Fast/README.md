@@ -67,3 +67,32 @@ The Render service root directory must be Recipient-Prediction-Model-V2-Fast.
     python -m pytest -q
 
 GitHub Actions runs the test suite on pushes and pull requests.
+
+
+## Historical walk-forward backtesting
+
+The model forecasts the probability that a **previously observed recipient** attends a future core drive. Summing those probabilities estimates returning households; it does not include first-time recipients or total attendance.
+
+The backtesting command evaluates the model one drive at a time. For each test drive, it trains a fresh model using only recipient-drive observations from earlier drives, predicts the next drive, records actual returning recipients, and advances the history. It also compares the model with a simple benchmark based on prior-drive attendance and the upcoming drive position.
+
+Run locally with the cumulative/lifetime Guest Visit export:
+
+```bash
+python -m seva_model.backtest \
+  --data "/path/to/Guest-Visit-Export.csv" \
+  --start-date 2025-01-01 \
+  --end-date 2026-09-26 \
+  --calendar-overrides config/drive_calendar_overrides.csv
+```
+
+The command writes three aggregate-only files:
+
+- `outputs/walk_forward_drive_results.csv` — one row per drive, including the training cutoff and predicted versus actual returning households.
+- `outputs/walk_forward_summary.json` — drive-level errors, recipient-level discrimination and probability metrics, and baseline comparison.
+- `outputs/walk_forward_calibration.csv` — predicted versus observed return rates by probability bin.
+
+No Guest IDs or recipient-level predictions are exported. **Never commit the real Guest Visit export**; it contains sensitive recipient information.
+
+The reviewed calendar override file prevents event classification from changing based on observed attendance during the backtest. It excludes the 2024-12-14 mini-drive. The June 2025 export contains only one Saturday distribution and is omitted pending schedule verification. Update the override file when confirmed drive dates become available.
+
+The default backtest begins in 2025 and requires at least 12 earlier core drives for training. Use `--min-training-drives` to change that threshold.
