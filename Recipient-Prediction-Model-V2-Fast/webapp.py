@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from datetime import date
-from io import BytesIO
 from pathlib import Path
 import hashlib
+import logging
 import math
+from time import perf_counter
 
 import joblib
 import numpy as np
@@ -64,21 +65,40 @@ def _probability_buckets(probabilities: np.ndarray) -> list[dict]:
 
 
 def _load_history(file_storage):
-    payload = file_storage.read()
-    if not payload:
+    """Load an uploaded cumulative export without making a second full byte copy."""
+    stream = file_storage.stream
+    stream.seek(0)
+
+    if not stream.read(1):
         raise ValueError("The uploaded CSV is empty.")
 
-    digest = hashlib.sha256(payload).hexdigest()
+    stream.seek(0)
+    digest_builder = hashlib.sha256()
+    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+        digest_builder.update(chunk)
+    digest = digest_builder.hexdigest()
+    stream.seek(0)
+
     if _CACHE["sha256"] == digest:
+        app.logger.info("History cache hit; skipping CSV parse and calendar inference.")
         return _CACHE["visits"], _CACHE["calendar"]
 
-    raw = load_raw_export(BytesIO(payload))
+    started = perf_counter()
+    raw = load_raw_export(stream)
     visits = collapse_to_visits(raw)
+    del raw
+
     if visits.empty:
         raise ValueError("The uploaded export contains no usable recipient visits.")
 
     calendar = infer_core_calendar(visits, CONFIG)
     _CACHE.update({"sha256": digest, "visits": visits, "calendar": calendar})
+    app.logger.info(
+        "History loaded: rows=%s core_drives=%s elapsed_seconds=%.2f",
+        len(visits),
+        len(calendar),
+        perf_counter() - started,
+    )
     return visits, calendar
 
 
@@ -97,6 +117,7 @@ def forecast():
     if request.method == "GET":
         return redirect(url_for("home"))
 
+    request_started = perf_counter()
     try:
         upload = request.files.get("data_file")
         if upload is None or not upload.filename:
@@ -168,6 +189,13 @@ def forecast():
             ],
             "trained_through": TRAINED_THROUGH,
         }
+        app.logger.info(
+            "Forecast complete: drive_date=%s position=%s recipients=%s elapsed_seconds=%.2f",
+            requested_date.isoformat(),
+            position,
+            len(score),
+            perf_counter() - request_started,
+        )
         return render_template(
             "index.html",
             result=result,
@@ -175,6 +203,7 @@ def forecast():
             trained_through=TRAINED_THROUGH,
         )
     except Exception as exc:
+        app.logger.exception("Forecast request failed.")
         return render_template(
             "index.html",
             result=None,
