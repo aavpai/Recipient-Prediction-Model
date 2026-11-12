@@ -6,3 +6,5 @@ PyYAML>=6.0,<7
 pytest>=8,<9
 Flask>=3.0,<4
 gunicorn>=22,<24
+psycopg[binary]>=3.2,<4
+Flask-WTF>=1.2,<2
