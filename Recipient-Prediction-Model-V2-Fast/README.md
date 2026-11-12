@@ -93,6 +93,6 @@ The command writes three aggregate-only files:
 
 No Guest IDs or recipient-level predictions are exported. **Never commit the real Guest Visit export**; it contains sensitive recipient information.
 
-The reviewed calendar override file prevents event classification from changing based on observed attendance during the backtest. It excludes the 2024-12-14 mini-drive. The June 2025 export contains only one Saturday distribution and is omitted pending schedule verification. Update the override file when confirmed drive dates become available.
+The fixed historical calendar override prevents event classification from changing based on observed attendance during the backtest. It excludes the 2024-12-14 mini-drive. The June 2025 export contains only one Saturday distribution and is omitted pending schedule verification. Update the override file when confirmed drive dates become available.
 
 The default backtest begins in 2025 and requires at least 12 earlier core drives for training. Use `--min-training-drives` to change that threshold.
