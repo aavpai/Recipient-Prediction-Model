@@ -222,6 +222,209 @@ def _apply_core_attendance(st: dict, d: date, meta: dict) -> None:
     st["consecutive_misses"] = 0
 
 
+def build_recipient_state_snapshot(
+    visits: pd.DataFrame,
+    core_calendar: pd.DataFrame,
+) -> tuple[list[dict], date | None]:
+    """Replay the lifetime export once and return compact per-recipient state.
+
+    The returned state omits the full visit-date list; those dates live in the
+    database visit table and are queried only for rolling-window counts.
+    """
+    by_date = _visits_by_date(visits)
+    core_meta = {r["date"]: r for r in core_calendar.to_dict("records")}
+    states: dict[str, dict] = {}
+    previous_core_date = None
+
+    for d in sorted(set(by_date) | set(core_meta)):
+        is_core = d in core_meta
+        preexisting = (
+            [gid for gid, state in states.items() if state["first_date"] < d]
+            if is_core else []
+        )
+
+        if is_core:
+            meta = core_meta[d]
+            for gid in preexisting:
+                state = states[gid]
+                state["core_opps"] += 1
+                state["d2_opps" if int(meta["second_drive"]) else "d1_opps"] += 1
+
+        todays = set()
+        for gid, visit in by_date.get(d, {}).items():
+            todays.add(gid)
+            if gid not in states:
+                states[gid] = _new_state(d, visit)
+            else:
+                state = states[gid]
+                state["last_any_date"] = d
+                state["all_visit_dates"].append(d)
+                for key in ["total_individuals", "kids", "adults", "seniors", "homeless"]:
+                    state[key] = int(visit[key])
+
+        if is_core:
+            meta = core_meta[d]
+            for gid in todays:
+                state = states[gid]
+                if state["first_date"] == d:
+                    state["core_opps"] += 1
+                    state["d2_opps" if int(meta["second_drive"]) else "d1_opps"] += 1
+
+            for gid in preexisting:
+                state = states[gid]
+                attended = int(gid in todays)
+                if attended:
+                    _apply_core_attendance(state, d, meta)
+                else:
+                    state["consecutive_misses"] += 1
+                state["attended_prev_core"] = attended
+
+            for gid in todays:
+                state = states[gid]
+                if state["first_date"] == d:
+                    _apply_core_attendance(state, d, meta)
+                    state["attended_prev_core"] = 1
+
+            previous_core_date = d
+
+    compact = []
+    for gid, state in states.items():
+        row = {key: value for key, value in state.items() if key != "all_visit_dates"}
+        row["guest_id"] = gid
+        row["all_prior_visits"] = len(state["all_visit_dates"])
+        compact.append(row)
+    return compact, previous_core_date
+
+
+def advance_recipient_state_snapshot(
+    state_rows: list[dict],
+    drive_visits: pd.DataFrame,
+    drive_meta: dict,
+) -> list[dict]:
+    """Advance saved recipient state by exactly one new core drive.
+
+    Existing recipients receive one new opportunity; attendees update their
+    histories, and previously unseen attendees are added with a first visit.
+    """
+    d = drive_meta["date"]
+    position = int(drive_meta["position"])
+    states = {str(row["guest_id"]): dict(row) for row in state_rows}
+
+    for state in states.values():
+        if state["first_date"] >= d:
+            raise ValueError("Drive date must be later than every existing recipient history.")
+        state["core_opps"] += 1
+        state["d2_opps" if position == 2 else "d1_opps"] += 1
+        state["consecutive_misses"] += 1
+        state["attended_prev_core"] = 0
+
+    for visit in drive_visits.to_dict("records"):
+        gid = str(visit["guest_id"])
+        if gid in states:
+            state = states[gid]
+            state["last_any_date"] = d
+            state["all_prior_visits"] += 1
+            for key in ["total_individuals", "kids", "adults", "seniors", "homeless"]:
+                state[key] = int(visit[key])
+        else:
+            state = _new_state(d, visit)
+            state["all_prior_visits"] = 1
+            state["core_opps"] = 1
+            state["d2_opps" if position == 2 else "d1_opps"] = 1
+            state["all_visit_dates"] = []
+            states[gid] = state
+
+        _apply_core_attendance(state, d, drive_meta)
+        state["attended_prev_core"] = 1
+        state.pop("all_visit_dates", None)
+
+    return list(states.values())
+
+
+def build_scoring_frame_from_states(
+    state_rows: list[dict],
+    recent_counts: dict[str, dict[str, int]],
+    future_meta: dict,
+    previous_core_date: date | None,
+) -> pd.DataFrame:
+    """Build model features from saved state without replaying lifetime visits."""
+    d = future_meta["date"]
+    rows = []
+
+    for state in state_rows:
+        gid = str(state["guest_id"])
+        days_last_any = (d - state["last_any_date"]).days
+        days_last_core = (
+            (d - state["last_core_date"]).days
+            if state["last_core_date"] is not None else 999
+        )
+        ordinary_n = state["ordinary_d1_visits"] + state["ordinary_d2_visits"]
+        d2_affinity = (
+            state["ordinary_d2_visits"] / ordinary_n if ordinary_n else 0.5
+        )
+        recent = recent_counts.get(gid, {})
+
+        row = {
+            "guest_id": gid,
+            "date": d,
+            "year": d.year,
+            "month": d.month,
+            "second_drive": int(future_meta["second_drive"]),
+            "toy": int(future_meta.get("toy", 0)),
+            "backpack": int(future_meta.get("backpack", 0)),
+            "thanksgiving": int(future_meta.get("thanksgiving", 0)),
+            "christmas": int(future_meta.get("christmas", 0)),
+            "days_since_prev_core_drive": (
+                (d - previous_core_date).days if previous_core_date else 14
+            ),
+            "days_since_last_any": days_last_any,
+            "days_since_last_core": days_last_core,
+            "log_days_since_last_any": math.log1p(days_last_any),
+            "log_days_since_last_core": math.log1p(days_last_core),
+            "all_prior_visits": int(state["all_prior_visits"]),
+            "prior_core_visits": int(state["core_visits"]),
+            "prior_core_opps": int(state["core_opps"]),
+            "core_attendance_rate": (
+                state["core_visits"] / state["core_opps"]
+                if state["core_opps"] else 0.0
+            ),
+            "d1_rate": (
+                state["d1_visits"] / state["d1_opps"]
+                if state["d1_opps"] else 0.0
+            ),
+            "d2_rate": (
+                state["d2_visits"] / state["d2_opps"]
+                if state["d2_opps"] else 0.0
+            ),
+            "ordinary_d2_affinity": d2_affinity,
+            "attended_prev_core": int(state["attended_prev_core"]),
+            "consecutive_core_misses": int(state["consecutive_misses"]),
+            "visits_last_30": int(recent.get("visits_last_30", 0)),
+            "visits_last_60": int(recent.get("visits_last_60", 0)),
+            "visits_last_90": int(recent.get("visits_last_90", 0)),
+            "visits_last_180": int(recent.get("visits_last_180", 0)),
+            "total_individuals": int(state["total_individuals"]),
+            "kids": int(state["kids"]),
+            "adults": int(state["adults"]),
+            "seniors": int(state["seniors"]),
+            "homeless": int(state["homeless"]),
+            "prior_toy_attended": int(state["prior_toy_attended"]),
+            "prior_backpack_attended": int(state["prior_backpack_attended"]),
+            "prior_thanksgiving_attended": int(state["prior_thanksgiving_attended"]),
+            "prior_christmas_attended": int(state["prior_christmas_attended"]),
+        }
+        row["second_x_affinity"] = row["second_drive"] * row["ordinary_d2_affinity"]
+        row["toy_x_kids"] = row["toy"] * row["kids"]
+        row["backpack_x_kids"] = row["backpack"] * row["kids"]
+        row["thanksgiving_x_household"] = row["thanksgiving"] * row["total_individuals"]
+        row["christmas_x_household"] = row["christmas"] * row["total_individuals"]
+        row["month_sin"] = math.sin(2 * math.pi * d.month / 12)
+        row["month_cos"] = math.cos(2 * math.pi * d.month / 12)
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
 def build_future_scoring_frame(
     visits: pd.DataFrame,
     core_calendar: pd.DataFrame,
