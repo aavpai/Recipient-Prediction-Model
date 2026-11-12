@@ -15,48 +15,169 @@
         <h1>Recipient Forecast</h1>
         <p class="subtitle">Estimate how many previously observed households are likely to return for an upcoming distribution drive.</p>
       </div>
-      <div class="status-pill">V1 · Return model</div>
+      <form action="{{ url_for('logout') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="secondary-button">Sign out</button>
+      </form>
     </header>
 
     <main>
-      <section class="panel input-panel">
-        <div class="section-heading">
-          <div>
-            <h2>Run a forecast</h2>
-            <p>Upload the latest Guest Visit export and select the upcoming core drive.</p>
-          </div>
-        </div>
+      {% if error %}
+        <div class="alert error">{{ error }}</div>
+      {% endif %}
 
-        {% if error %}
-          <div class="alert error">{{ error }}</div>
+      {% if db_error %}
+        <div class="alert error">{{ db_error }}</div>
+      {% endif %}
+
+      {% if database_configured %}
+        {% if db_status and db_status.initialized %}
+          <section class="panel">
+            <div class="section-heading">
+              <div>
+                <div class="eyebrow">PERSISTENT RECIPIENT HISTORY</div>
+                <h2>History is initialized</h2>
+                <p>The lifetime export is stored as normalized visit history. New drives can now be appended without uploading the lifetime file again.</p>
+              </div>
+              <div class="status-pill">Incremental mode</div>
+            </div>
+            <div class="metric-grid">
+              <article class="metric-card">
+                <div class="metric-label">Known recipients</div>
+                <div class="metric-value">{{ "{:,}".format(db_status.recipients) }}</div>
+              </article>
+              <article class="metric-card">
+                <div class="metric-label">Stored visits</div>
+                <div class="metric-value">{{ "{:,}".format(db_status.visits) }}</div>
+              </article>
+              <article class="metric-card">
+                <div class="metric-label">Core drives imported</div>
+                <div class="metric-value">{{ "{:,}".format(db_status.core_drives) }}</div>
+              </article>
+              <article class="metric-card">
+                <div class="metric-label">Latest recorded visit</div>
+                <div class="metric-value compact">
+                  {% if db_status.latest_visit %}{{ db_status.latest_visit.strftime("%b %d, %Y") }}{% else %}—{% endif %}
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel input-panel">
+            <div class="section-heading">
+              <div>
+                <h2>Append a completed drive</h2>
+                <p>After each distribution, upload only that drive's Guest Visit CSV. The system updates recipient histories and rejects duplicate drive dates.</p>
+              </div>
+            </div>
+            <form action="{{ url_for('update') }}" method="post" enctype="multipart/form-data" class="forecast-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <label class="field span-2">
+                <span>Latest drive CSV</span>
+                <input type="file" name="data_file" accept=".csv,text/csv" required>
+              </label>
+              <label class="field">
+                <span>Completed drive date</span>
+                <input type="date" name="drive_date" required>
+              </label>
+              <label class="field">
+                <span>Drive position</span>
+                <select name="drive_position" required>
+                  <option value="1">Drive 1 — regular</option>
+                  <option value="2">Drive 2 — TEFAP / extra food</option>
+                </select>
+              </label>
+              <div class="span-2 action-row">
+                <button type="submit">Import completed drive</button>
+                <span class="privacy-note">The CSV is processed and normalized into the private database; it is never added to GitHub.</span>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel input-panel">
+            <div class="section-heading">
+              <div>
+                <h2>Forecast the next drive</h2>
+                <p>No CSV upload is needed. The model scores the saved recipient states and rolling visit counts.</p>
+              </div>
+            </div>
+            <form action="{{ url_for('forecast') }}" method="post" class="forecast-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <label class="field">
+                <span>Upcoming drive date</span>
+                <input type="date" name="drive_date" required>
+              </label>
+              <label class="field">
+                <span>Drive position</span>
+                <select name="drive_position" required>
+                  <option value="1">Drive 1 — regular</option>
+                  <option value="2">Drive 2 — TEFAP / extra food</option>
+                </select>
+              </label>
+              <div class="span-2 action-row">
+                <button type="submit">Generate forecast</button>
+                <span class="privacy-note">Forecasts cover previously observed recipients, not first-time households.</span>
+              </div>
+            </form>
+          </section>
+        {% else %}
+          <section class="panel input-panel">
+            <div class="section-heading">
+              <div>
+                <div class="eyebrow">ONE-TIME SETUP</div>
+                <h2>Initialize recipient history</h2>
+                <p>Upload the cumulative/lifetime Guest Visit export once. The system will normalize visits, infer the historical core-drive calendar, and create compact recipient states.</p>
+              </div>
+              <div class="status-pill">Waiting for baseline</div>
+            </div>
+            <form action="{{ url_for('initialize') }}" method="post" enctype="multipart/form-data" class="forecast-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <label class="field span-2">
+                <span>Cumulative/lifetime Guest Visit CSV</span>
+                <input type="file" name="data_file" accept=".csv,text/csv" required>
+                <small>This is the full historical export, not the last-drive file. It is imported once.</small>
+              </label>
+              <div class="span-2 action-row">
+                <button type="submit">Initialize recipient history</button>
+                <span class="privacy-note">Recipient-level records are stored in the configured private PostgreSQL database, not in GitHub.</span>
+              </div>
+            </form>
+          </section>
         {% endif %}
-
-        <form action="/forecast" method="post" enctype="multipart/form-data" class="forecast-form">
-          <label class="field span-2">
-            <span>Guest Visit CSV</span>
-            <input type="file" name="data_file" accept=".csv,text/csv" required>
-            <small>The app processes the file for this forecast and does not save it to the repository.</small>
-          </label>
-
-          <label class="field">
-            <span>Upcoming drive date</span>
-            <input type="date" name="drive_date" required>
-          </label>
-
-          <label class="field">
-            <span>Drive position</span>
-            <select name="drive_position" required>
-              <option value="1">Drive 1</option>
-              <option value="2">Drive 2 — TEFAP / extra food</option>
-            </select>
-          </label>
-
-          <div class="span-2 action-row">
-            <button type="submit">Generate forecast</button>
-            <span class="privacy-note">No names, addresses, or dates of birth are model features.</span>
+      {% else %}
+        <section class="panel input-panel">
+          <div class="section-heading">
+            <div>
+              <h2>Run a forecast</h2>
+              <p>Upload the cumulative/lifetime export and select the upcoming core drive. Configure a PostgreSQL database to switch to one-time initialization and incremental updates.</p>
+            </div>
+            <div class="status-pill">Fast scoring mode</div>
           </div>
-        </form>
-      </section>
+          <form action="{{ url_for('forecast') }}" method="post" enctype="multipart/form-data" class="forecast-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label class="field span-2">
+              <span>Cumulative/lifetime Guest Visit CSV</span>
+              <input type="file" name="data_file" accept=".csv,text/csv" required>
+              <small>For this temporary mode, upload the complete historical export for each forecast.</small>
+            </label>
+            <label class="field">
+              <span>Upcoming drive date</span>
+              <input type="date" name="drive_date" required>
+            </label>
+            <label class="field">
+              <span>Drive position</span>
+              <select name="drive_position" required>
+                <option value="1">Drive 1 — regular</option>
+                <option value="2">Drive 2 — TEFAP / extra food</option>
+              </select>
+            </label>
+            <div class="span-2 action-row">
+              <button type="submit">Generate forecast</button>
+              <span class="privacy-note">The uploaded file is processed in memory and is not committed to GitHub.</span>
+            </div>
+          </form>
+        </section>
+      {% endif %}
 
       {% if result %}
       <section class="result-section">
@@ -115,24 +236,6 @@
           </article>
         </div>
       </section>
-      {% else %}
-      <section class="info-grid">
-        <article class="panel">
-          <div class="number">01</div>
-          <h3>Recipient history</h3>
-          <p>Recency, frequency, prior core-drive attendance, missed drives, and Drive-2 affinity.</p>
-        </article>
-        <article class="panel">
-          <div class="number">02</div>
-          <h3>Drive characteristics</h3>
-          <p>Drive 2 is TEFAP / extra food. Toy, Backpack, Thanksgiving, and Christmas overlays are recognized automatically from the month and drive position.</p>
-        </article>
-        <article class="panel">
-          <div class="number">03</div>
-          <h3>Operational forecast</h3>
-          <p>Recipient probabilities are summed into a single estimate of returning households for the upcoming drive.</p>
-        </article>
-      </section>
       {% endif %}
 
       <section class="method-note">
@@ -141,7 +244,7 @@
     </main>
 
     <footer>
-      Seva Data Project · Recipient Return Prediction V1
+      Seva Data Project · Recipient Return Prediction V2
     </footer>
   </div>
 </body>
