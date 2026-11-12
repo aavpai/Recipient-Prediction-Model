@@ -99,8 +99,8 @@ def _probability_buckets(probabilities: np.ndarray) -> list[dict]:
     return [{"label": label, "count": int(mask.sum())} for label, mask in cuts]
 
 
-def _parse_upload(file_storage):
-    """Hash and parse a CSV upload without retaining a second full file copy."""
+def _hash_upload(file_storage) -> str:
+    """Hash a seekable upload stream without copying the complete file into RAM."""
     stream = file_storage.stream
     stream.seek(0)
     if not stream.read(1):
@@ -110,10 +110,14 @@ def _parse_upload(file_storage):
     digest_builder = hashlib.sha256()
     for chunk in iter(lambda: stream.read(1024 * 1024), b""):
         digest_builder.update(chunk)
-    digest = digest_builder.hexdigest()
     stream.seek(0)
+    return digest_builder.hexdigest()
 
-    raw = load_raw_export(stream)
+
+def _parse_upload(file_storage):
+    """Parse the required CSV fields after streaming the file hash."""
+    digest = _hash_upload(file_storage)
+    raw = load_raw_export(file_storage.stream)
     visits = collapse_to_visits(raw)
     del raw
     if visits.empty:
@@ -123,11 +127,16 @@ def _parse_upload(file_storage):
 
 def _load_history(file_storage):
     digest_started = perf_counter()
-    visits, digest = _parse_upload(file_storage)
+    digest = _hash_upload(file_storage)
     if _CACHE["sha256"] == digest:
-        app.logger.info("History cache hit; skipping calendar inference.")
+        app.logger.info("History cache hit; skipping CSV parse and calendar inference.")
         return _CACHE["visits"], _CACHE["calendar"]
 
+    raw = load_raw_export(file_storage.stream)
+    visits = collapse_to_visits(raw)
+    del raw
+    if visits.empty:
+        raise ValueError("The uploaded export contains no usable recipient visits.")
     calendar = infer_core_calendar(visits, CONFIG)
     _CACHE.update({"sha256": digest, "visits": visits, "calendar": calendar})
     app.logger.info(
