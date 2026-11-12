@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Seva Recipient Forecast</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+  <div class="page-shell">
+    <main class="login-shell">
+      <section class="panel input-panel">
+        <div class="eyebrow">SEVA DATA PROJECT</div>
+        <h1>Recipient Forecast</h1>
+        <p class="subtitle">Sign in to access the private forecasting dashboard.</p>
+        {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+        <form action="{{ url_for('login') }}" method="post" class="forecast-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label class="field span-2">
+            <span>Dashboard password</span>
+            <input type="password" name="password" autocomplete="current-password" required autofocus>
+          </label>
+          <div class="span-2 action-row">
+            <button type="submit">Sign in</button>
+          </div>
+        </form>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
